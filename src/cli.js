@@ -3,7 +3,7 @@
 const { parseArgs, UsageError } = require('./args');
 const { createRpcClient, resolveRpcUrl, RpcError } = require('./rpc');
 const { scanWallet } = require('./scan');
-const { renderText } = require('./format');
+const { renderText, renderJson } = require('./format');
 const { version } = require('../package.json');
 
 const HELP = `sol-rent-reclaim v${version}
@@ -54,7 +54,7 @@ async function run(argv, io = {}) {
 
   try {
     const result = await scanWallet(client, opts.address);
-    stdout.write(renderText(result));
+    stdout.write(opts.json ? renderJson(result) : renderText(result));
     return 0;
   } catch (err) {
     if (err instanceof RpcError) {
