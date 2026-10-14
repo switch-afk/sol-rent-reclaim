@@ -18,6 +18,18 @@ function sink() {
   };
 }
 
+function mixedWallet() {
+  return createMockRpc({
+    getTokenAccountsByOwner: tokenAccountsHandler({
+      token: [
+        tokenAccount({ pubkey: 'EmptyOne', mint: 'MintOne' }),
+        tokenAccount({ pubkey: 'Funded', amount: '10' }),
+      ],
+      token2022: [tokenAccount({ pubkey: 'FrozenOne', mint: 'MintTwo', state: 'frozen' })],
+    }),
+  });
+}
+
 test('--help prints usage and exits 0', async () => {
   const stdout = sink();
   const code = await run(['--help'], { stdout, stderr: sink() });
@@ -39,16 +51,8 @@ test('usage errors exit 2 and print to stderr', async () => {
   assert.match(stderr.data, /Missing wallet address/);
 });
 
-test('lists empty token accounts', async () => {
-  const mock = createMockRpc({
-    getTokenAccountsByOwner: tokenAccountsHandler({
-      token: [
-        tokenAccount({ pubkey: 'EmptyOne', mint: 'MintOne' }),
-        tokenAccount({ pubkey: 'Funded', amount: '10' }),
-      ],
-      token2022: [tokenAccount({ pubkey: 'FrozenOne', mint: 'MintTwo', state: 'frozen' })],
-    }),
-  });
+test('lists empty token accounts with totals', async () => {
+  const mock = mixedWallet();
   const stdout = sink();
   const code = await run([ADDR], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
 
@@ -56,6 +60,8 @@ test('lists empty token accounts', async () => {
   assert.match(stdout.data, /Token accounts: 3 \(2 empty\)/);
   assert.match(stdout.data, /EmptyOne {2}token {2}mint MintOne {2}2039280 lamports/);
   assert.match(stdout.data, /FrozenOne.*\[cannot close: frozen\]/);
+  assert.match(stdout.data, /Reclaimable: 0\.00203928 SOL from 1 account\n/);
+  assert.match(stdout.data, /Locked \(cannot close\): 0\.00203928 SOL in 1 account\n/);
   assert.ok(!stdout.data.includes('Funded'));
 });
 
@@ -65,6 +71,34 @@ test('reports when there is nothing to reclaim', async () => {
   const code = await run([ADDR], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
   assert.equal(code, 0);
   assert.match(stdout.data, /No empty token accounts found\./);
+  assert.ok(!stdout.data.includes('Reclaimable'));
+});
+
+test('--json prints a parseable summary', async () => {
+  const mock = mixedWallet();
+  const stdout = sink();
+  const code = await run([ADDR, '--json'], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
+
+  assert.equal(code, 0);
+  const data = JSON.parse(stdout.data);
+  assert.equal(data.address, ADDR);
+  assert.equal(data.totalTokenAccounts, 3);
+  assert.equal(data.emptyCount, 2);
+  assert.equal(data.closableCount, 1);
+  assert.equal(data.reclaimableLamports, 2039280);
+  assert.equal(data.reclaimableSol, '0.00203928');
+  assert.equal(data.lockedLamports, 2039280);
+  assert.deepEqual(data.emptyAccounts.map((a) => a.pubkey), ['EmptyOne', 'FrozenOne']);
+});
+
+test('--json for a clean wallet has empty results', async () => {
+  const mock = createMockRpc({ getTokenAccountsByOwner: tokenAccountsHandler() });
+  const stdout = sink();
+  await run([ADDR, '--json'], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
+  const data = JSON.parse(stdout.data);
+  assert.equal(data.emptyCount, 0);
+  assert.equal(data.reclaimableSol, '0');
+  assert.deepEqual(data.emptyAccounts, []);
 });
 
 test('--rpc overrides the env var', async () => {
@@ -80,14 +114,16 @@ test('--rpc overrides the env var', async () => {
 
 test('RPC failures exit 1 without leaking the URL', async () => {
   const mock = createMockRpc({ getTokenAccountsByOwner: httpError(500) });
+  const stdout = sink();
   const stderr = sink();
-  const code = await run([ADDR], {
-    stdout: sink(),
+  const code = await run([ADDR, '--json'], {
+    stdout,
     stderr,
     env: { SOL_RENT_RECLAIM_RPC: 'https://rpc.example.com/?key=secret' },
     fetch: mock.fetch,
   });
   assert.equal(code, 1);
+  assert.equal(stdout.data, '');
   assert.match(stderr.data, /Error: rpc\.example\.com returned HTTP 500/);
   assert.ok(!stderr.data.includes('secret'));
 });
