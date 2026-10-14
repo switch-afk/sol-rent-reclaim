@@ -46,6 +46,7 @@ test('finds only zero-balance accounts across both programs', async () => {
   assert.deepEqual(result.empty.map((a) => a.program), ['token', 'token-2022']);
   assert.deepEqual(result.empty.map((a) => a.lamports), [2039280, 2100000]);
   assert.deepEqual(result.empty.map((a) => a.closable), [true, true]);
+  assert.deepEqual(result.empty.map((a) => a.blockedReason), [null, null]);
 });
 
 test('queries both programs with jsonParsed encoding', async () => {
@@ -62,6 +63,29 @@ test('queries both programs with jsonParsed encoding', async () => {
   assert.equal(mock.calls[1].params[1].programId, TOKEN_PROGRAMS[1].id);
 });
 
+test('the program filter only queries the chosen program', async () => {
+  const handlers = {
+    getTokenAccountsByOwner: tokenAccountsHandler({
+      token: [tokenAccount({ pubkey: 'A1' })],
+      token2022: [tokenAccount({ pubkey: 'B1' }), tokenAccount({ pubkey: 'B2' })],
+    }),
+  };
+
+  const first = setup(handlers);
+  const onlyToken = await scanWallet(first.client, WALLET, { program: 'token' });
+  assert.equal(first.mock.calls.length, 1);
+  assert.equal(first.mock.calls[0].params[1].programId, TOKEN_PROGRAMS[0].id);
+  assert.equal(onlyToken.total, 1);
+  assert.deepEqual(onlyToken.empty.map((a) => a.pubkey), ['A1']);
+
+  const second = setup(handlers);
+  const only2022 = await scanWallet(second.client, WALLET, { program: 'token-2022' });
+  assert.equal(second.mock.calls.length, 1);
+  assert.equal(second.mock.calls[0].params[1].programId, TOKEN_PROGRAMS[1].id);
+  assert.equal(only2022.total, 2);
+  assert.deepEqual(only2022.empty.map((a) => a.pubkey), ['B1', 'B2']);
+});
+
 test('frozen accounts are not closable', async () => {
   const { client } = setup({
     getTokenAccountsByOwner: tokenAccountsHandler({
@@ -71,6 +95,7 @@ test('frozen accounts are not closable', async () => {
   const result = await scanWallet(client, WALLET);
   assert.equal(result.empty[0].state, 'frozen');
   assert.equal(result.empty[0].closable, false);
+  assert.equal(result.empty[0].blockedReason, 'frozen');
 });
 
 test('a close authority other than the wallet blocks closing', async () => {
@@ -84,7 +109,33 @@ test('a close authority other than the wallet blocks closing', async () => {
   });
   const result = await scanWallet(client, WALLET);
   assert.equal(result.empty[0].closable, false);
+  assert.equal(result.empty[0].blockedReason, 'close-authority');
   assert.equal(result.empty[1].closable, true);
+  assert.equal(result.empty[1].blockedReason, null);
+});
+
+test('withheld transfer fees block closing until harvested', async () => {
+  const { client } = setup({
+    getTokenAccountsByOwner: tokenAccountsHandler({
+      token2022: [
+        tokenAccount({
+          pubkey: 'W1',
+          extensions: [{ extension: 'transferFeeAmount', state: { withheldAmount: 5 } }],
+        }),
+        tokenAccount({
+          pubkey: 'W2',
+          extensions: [{ extension: 'transferFeeAmount', state: { withheldAmount: 0 } }],
+        }),
+        tokenAccount({
+          pubkey: 'W3',
+          extensions: [{ extension: 'immutableOwner' }],
+        }),
+      ],
+    }),
+  });
+  const result = await scanWallet(client, WALLET);
+  assert.deepEqual(result.empty.map((a) => a.closable), [false, true, true]);
+  assert.equal(result.empty[0].blockedReason, 'withheld-fees');
 });
 
 test('entries without parsed data are counted but skipped', async () => {

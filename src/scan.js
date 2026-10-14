@@ -14,14 +14,27 @@ async function fetchTokenAccounts(client, address, program) {
   return (result && result.value) || [];
 }
 
+function hasWithheldFees(info) {
+  if (!Array.isArray(info.extensions)) return false;
+  return info.extensions.some(
+    (ext) => ext?.extension === 'transferFeeAmount' && Number(ext.state?.withheldAmount) > 0
+  );
+}
+
+function blockedReasonFor(info, state, closeAuthority, wallet) {
+  if (state === 'frozen') return 'frozen';
+  if (closeAuthority !== null && closeAuthority !== wallet) return 'close-authority';
+  if (hasWithheldFees(info)) return 'withheld-fees';
+  return null;
+}
+
 function parseEntry(entry, program, wallet) {
   const info = entry?.account?.data?.parsed?.info;
   if (!info || !info.tokenAmount) return null;
 
   const state = info.state || 'initialized';
   const closeAuthority = info.closeAuthority || null;
-  const closable =
-    state !== 'frozen' && (closeAuthority === null || closeAuthority === wallet);
+  const blockedReason = blockedReasonFor(info, state, closeAuthority, wallet);
 
   return {
     isEmpty: info.tokenAmount.amount === '0',
@@ -31,15 +44,19 @@ function parseEntry(entry, program, wallet) {
     lamports: Number(entry.account.lamports) || 0,
     state,
     closeAuthority,
-    closable,
+    closable: blockedReason === null,
+    blockedReason,
   };
 }
 
-async function scanWallet(client, address) {
+async function scanWallet(client, address, options = {}) {
+  const selected = options.program || 'all';
+  const programs = TOKEN_PROGRAMS.filter((p) => selected === 'all' || p.name === selected);
+
   let total = 0;
   const empty = [];
 
-  for (const program of TOKEN_PROGRAMS) {
+  for (const program of programs) {
     const entries = await fetchTokenAccounts(client, address, program);
     total += entries.length;
 

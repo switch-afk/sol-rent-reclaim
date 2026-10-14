@@ -35,6 +35,8 @@ test('--help prints usage and exits 0', async () => {
   const code = await run(['--help'], { stdout, stderr: sink() });
   assert.equal(code, 0);
   assert.match(stdout.data, /Usage:/);
+  assert.match(stdout.data, /--program/);
+  assert.match(stdout.data, /--limit/);
 });
 
 test('--version prints the package version', async () => {
@@ -51,15 +53,23 @@ test('usage errors exit 2 and print to stderr', async () => {
   assert.match(stderr.data, /Missing wallet address/);
 });
 
-test('lists empty token accounts with totals', async () => {
+test('a bad --program exits 2', async () => {
+  const stderr = sink();
+  const code = await run([ADDR, '--program', 'nft'], { stdout: sink(), stderr });
+  assert.equal(code, 2);
+  assert.match(stderr.data, /--program must be one of/);
+});
+
+test('prints an aligned table with totals', async () => {
   const mock = mixedWallet();
   const stdout = sink();
   const code = await run([ADDR], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
 
   assert.equal(code, 0);
   assert.match(stdout.data, /Token accounts: 3 \(2 empty\)/);
-  assert.match(stdout.data, /EmptyOne {2}token {2}mint MintOne {2}2039280 lamports/);
-  assert.match(stdout.data, /FrozenOne.*\[cannot close: frozen\]/);
+  assert.match(stdout.data, /ACCOUNT +PROGRAM +MINT +RENT \(SOL\)/);
+  assert.match(stdout.data, /EmptyOne +token +MintOne +0\.00203928\n/);
+  assert.match(stdout.data, /FrozenOne +token-2022 +MintTwo +0\.00203928 +\[cannot close: frozen\]/);
   assert.match(stdout.data, /Reclaimable: 0\.00203928 SOL from 1 account\n/);
   assert.match(stdout.data, /Locked \(cannot close\): 0\.00203928 SOL in 1 account\n/);
   assert.ok(!stdout.data.includes('Funded'));
@@ -74,10 +84,52 @@ test('reports when there is nothing to reclaim', async () => {
   assert.ok(!stdout.data.includes('Reclaimable'));
 });
 
-test('--json prints a parseable summary', async () => {
+test('--limit trims the list but not the totals', async () => {
+  const mock = createMockRpc({
+    getTokenAccountsByOwner: tokenAccountsHandler({
+      token: [
+        tokenAccount({ pubkey: 'First' }),
+        tokenAccount({ pubkey: 'Second' }),
+        tokenAccount({ pubkey: 'Third' }),
+      ],
+    }),
+  });
+  const stdout = sink();
+  await run([ADDR, '--limit', '2'], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
+
+  assert.match(stdout.data, /Token accounts: 3 \(3 empty\)/);
+  assert.ok(stdout.data.includes('First'));
+  assert.ok(stdout.data.includes('Second'));
+  assert.ok(!stdout.data.includes('Third'));
+  assert.match(stdout.data, /\.\.\. and 1 more/);
+  assert.match(stdout.data, /Reclaimable: 0\.00611784 SOL from 3 accounts/);
+});
+
+test('--program limits the scan to one token program', async () => {
   const mock = mixedWallet();
   const stdout = sink();
-  const code = await run([ADDR, '--json'], { stdout, stderr: sink(), env: {}, fetch: mock.fetch });
+  const code = await run([ADDR, '--program', 'token-2022'], {
+    stdout,
+    stderr: sink(),
+    env: {},
+    fetch: mock.fetch,
+  });
+
+  assert.equal(code, 0);
+  assert.equal(mock.calls.length, 1);
+  assert.ok(stdout.data.includes('FrozenOne'));
+  assert.ok(!stdout.data.includes('EmptyOne'));
+});
+
+test('--json prints a parseable summary and ignores --limit', async () => {
+  const mock = mixedWallet();
+  const stdout = sink();
+  const code = await run([ADDR, '--json', '--limit', '1'], {
+    stdout,
+    stderr: sink(),
+    env: {},
+    fetch: mock.fetch,
+  });
 
   assert.equal(code, 0);
   const data = JSON.parse(stdout.data);
@@ -89,6 +141,7 @@ test('--json prints a parseable summary', async () => {
   assert.equal(data.reclaimableSol, '0.00203928');
   assert.equal(data.lockedLamports, 2039280);
   assert.deepEqual(data.emptyAccounts.map((a) => a.pubkey), ['EmptyOne', 'FrozenOne']);
+  assert.deepEqual(data.emptyAccounts.map((a) => a.blockedReason), [null, 'frozen']);
 });
 
 test('--json for a clean wallet has empty results', async () => {
