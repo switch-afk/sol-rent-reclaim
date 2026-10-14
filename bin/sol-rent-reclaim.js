@@ -3,4 +3,12 @@
 
 const { run } = require('../src/cli');
 
-process.exitCode = run(process.argv.slice(2));
+run(process.argv.slice(2)).then(
+  (code) => {
+    process.exitCode = code;
+  },
+  (err) => {
+    console.error(`Unexpected error: ${err.message}`);
+    process.exitCode = 1;
+  }
+);
