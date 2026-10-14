@@ -15,10 +15,13 @@ Usage:
   sol-rent-reclaim <wallet-address> [options]
 
 Options:
-  --rpc <url>   RPC endpoint (or set SOL_RENT_RECLAIM_RPC)
-  --json        Print machine-readable JSON
-  -h, --help    Show this help
-  -v, --version Show the version
+  --rpc <url>       RPC endpoint (or set SOL_RENT_RECLAIM_RPC)
+  --program <name>  token, token-2022 or all (default: all)
+  --limit <n>       Show at most n accounts in the text list
+                    (totals still cover every empty account)
+  --json            Print machine-readable JSON (ignores --limit)
+  -h, --help        Show this help
+  -v, --version     Show the version
 `;
 
 async function run(argv, io = {}) {
@@ -53,8 +56,10 @@ async function run(argv, io = {}) {
   });
 
   try {
-    const result = await scanWallet(client, opts.address);
-    stdout.write(opts.json ? renderJson(result) : renderText(result));
+    const result = await scanWallet(client, opts.address, { program: opts.program });
+    stdout.write(
+      opts.json ? renderJson(result) : renderText(result, { limit: opts.limit })
+    );
     return 0;
   } catch (err) {
     if (err instanceof RpcError) {

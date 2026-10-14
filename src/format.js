@@ -2,18 +2,37 @@
 
 const { summarize, formatSol } = require('./summary');
 
+const REASONS = {
+  frozen: 'frozen',
+  'close-authority': 'close authority is another address',
+  'withheld-fees': 'withheld transfer fees must be harvested first',
+};
+
 function plural(count, word) {
   return `${count} ${word}${count === 1 ? '' : 's'}`;
 }
 
 function closeNote(account) {
   if (account.closable) return '';
-  const reason =
-    account.state === 'frozen' ? 'frozen' : 'close authority is another address';
-  return `  [cannot close: ${reason}]`;
+  return `  [cannot close: ${REASONS[account.blockedReason] || 'blocked'}]`;
 }
 
-function renderText(result) {
+function renderTable(accounts) {
+  const header = ['ACCOUNT', 'PROGRAM', 'MINT', 'RENT (SOL)'];
+  const rows = accounts.map((a) => [a.pubkey, a.program, a.mint, formatSol(a.lamports)]);
+  const widths = header.map((label, col) =>
+    Math.max(label.length, ...rows.map((row) => row[col].length))
+  );
+  const fmt = (row) =>
+    `${row[0].padEnd(widths[0])}  ${row[1].padEnd(widths[1])}  ` +
+    `${row[2].padEnd(widths[2])}  ${row[3].padStart(widths[3])}`;
+
+  const lines = [fmt(header)];
+  rows.forEach((row, i) => lines.push(fmt(row) + closeNote(accounts[i])));
+  return lines;
+}
+
+function renderText(result, options = {}) {
   const summary = summarize(result);
   const lines = [
     `Wallet: ${summary.address}`,
@@ -26,11 +45,12 @@ function renderText(result) {
     return lines.join('\n') + '\n';
   }
 
-  for (const account of summary.empty) {
-    lines.push(
-      `${account.pubkey}  ${account.program}  mint ${account.mint}  ` +
-        `${account.lamports} lamports${closeNote(account)}`
-    );
+  const shown = options.limit ? summary.empty.slice(0, options.limit) : summary.empty;
+  lines.push(...renderTable(shown));
+
+  const hidden = summary.emptyCount - shown.length;
+  if (hidden > 0) {
+    lines.push(`... and ${hidden} more (raise --limit or use --json to see all)`);
   }
 
   lines.push('');

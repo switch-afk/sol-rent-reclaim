@@ -9,6 +9,7 @@ function tokenAccount({
   lamports = 2039280,
   state = 'initialized',
   closeAuthority,
+  extensions,
 } = {}) {
   const info = {
     mint,
@@ -17,6 +18,7 @@ function tokenAccount({
     tokenAmount: { amount, decimals: 6, uiAmount: Number(amount), uiAmountString: amount },
   };
   if (closeAuthority) info.closeAuthority = closeAuthority;
+  if (extensions) info.extensions = extensions;
 
   return {
     pubkey,
